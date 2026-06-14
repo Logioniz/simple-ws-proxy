@@ -1,8 +1,12 @@
 """SOCKS5 proxy client.
 
-Listens on a local TCP port, performs the SOCKS5 handshake (with mandatory
-username/password authentication) with the connecting application, then
-tunnels the traffic through the WebSocket proxy server using XOR encryption.
+Listens on a local TCP port, performs the SOCKS5 handshake with the connecting
+application, then tunnels the traffic through the WebSocket proxy server using
+XOR encryption.
+
+Authentication is optional: when ``--client-user`` and ``--client-password`` are
+provided the server requires username/password auth (RFC 1929); otherwise
+no-authentication (method 0x00) is accepted.
 """
 
 import asyncio

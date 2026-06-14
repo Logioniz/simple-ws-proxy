@@ -3,7 +3,10 @@
 Provides two classes:
 
 * :class:`Socks5Server` — performs the server-side handshake with a
-  connecting SOCKS5 application (mandatory username/password auth).
+  connecting SOCKS5 application.  Supports both no-authentication and
+  username/password auth (RFC 1929).  When credentials are supplied at
+  construction, username/password auth is required; otherwise
+  no-authentication is accepted.
 * :class:`Socks5Client` — performs the client-side handshake when
   connecting *through* a SOCKS5 proxy (useful for testing and for
   chained / double-tunnel scenarios).
@@ -64,19 +67,24 @@ Socks5Handler = Callable[
 class Socks5Server:
     """Server-side SOCKS5 handshake handler.
 
-    Accepts a connection from a SOCKS5-aware application, authenticates it
-    with username/password (RFC 1929), and returns the requested target
-    ``host:port``.
+    Accepts a connection from a SOCKS5-aware application and returns the
+    requested target ``host:port``.
 
-    Username/password authentication is the **only** accepted method.
-    Credentials are validated against the values supplied at construction.
+    Two authentication modes are supported:
+
+    * **No authentication** — when *username* and *password* are both
+      ``None`` (the default).  The server advertises
+      ``NO AUTHENTICATION REQUIRED`` (method 0x00) and skips the RFC 1929
+      sub-negotiation entirely.
+    * **Username/password** (RFC 1929) — when both *username* and *password*
+      are provided.  Credentials are validated against the supplied values.
 
     Args:
-        username: Expected SOCKS5 username.
-        password: Expected SOCKS5 password.
+        username: Expected SOCKS5 username, or ``None`` for no-auth mode.
+        password: Expected SOCKS5 password, or ``None`` for no-auth mode.
     """
 
-    def __init__(self, username: str, password: str) -> None:
+    def __init__(self, username: str | None = None, password: str | None = None) -> None:
         self._username = username
         self._password = password
 
@@ -132,7 +140,7 @@ class Socks5Server:
             ``"host:port"`` string on success, or ``None`` on failure.
         """
         # ---------------------------------------------------------------- #
-        # Greeting — only username/password auth is acceptable             #
+        # Greeting                                                          #
         # ---------------------------------------------------------------- #
         header = await reader.readexactly(2)
         version, nmethods = header
@@ -142,37 +150,49 @@ class Socks5Server:
 
         methods = set(await reader.readexactly(nmethods))
 
-        if SOCKS5_AUTH_USERNAME_PASSWORD not in methods:
-            writer.write(bytes([SOCKS5_VERSION, SOCKS5_AUTH_NO_ACCEPTABLE]))
+        require_auth = self._username is not None or self._password is not None
+
+        if require_auth:
+            if SOCKS5_AUTH_USERNAME_PASSWORD not in methods:
+                writer.write(bytes([SOCKS5_VERSION, SOCKS5_AUTH_NO_ACCEPTABLE]))
+                await writer.drain()
+                logger.warning('SOCKS5 server: client did not offer username/password auth')
+                return None
+
+            writer.write(bytes([SOCKS5_VERSION, SOCKS5_AUTH_USERNAME_PASSWORD]))
             await writer.drain()
-            logger.warning('SOCKS5 server: client did not offer username/password auth')
-            return None
 
-        writer.write(bytes([SOCKS5_VERSION, SOCKS5_AUTH_USERNAME_PASSWORD]))
-        await writer.drain()
+            # ---------------------------------------------------------------- #
+            # RFC 1929 sub-negotiation                                         #
+            # ---------------------------------------------------------------- #
+            sub_ver = (await reader.readexactly(1))[0]
+            if sub_ver != 0x01:
+                logger.warning('SOCKS5 server: unexpected auth sub-version %d', sub_ver)
+                return None
 
-        # ---------------------------------------------------------------- #
-        # RFC 1929 sub-negotiation                                         #
-        # ---------------------------------------------------------------- #
-        sub_ver = (await reader.readexactly(1))[0]
-        if sub_ver != 0x01:
-            logger.warning('SOCKS5 server: unexpected auth sub-version %d', sub_ver)
-            return None
+            ulen = (await reader.readexactly(1))[0]
+            received_username = (await reader.readexactly(ulen)).decode(errors='replace')
 
-        ulen = (await reader.readexactly(1))[0]
-        received_username = (await reader.readexactly(ulen)).decode(errors='replace')
+            plen = (await reader.readexactly(1))[0]
+            received_password = (await reader.readexactly(plen)).decode(errors='replace')
 
-        plen = (await reader.readexactly(1))[0]
-        received_password = (await reader.readexactly(plen)).decode(errors='replace')
+            if received_username != self._username or received_password != self._password:
+                writer.write(bytes([0x01, 0x01]))  # failure
+                await writer.drain()
+                logger.warning('SOCKS5 server: authentication failed for user %r', received_username)
+                return None
 
-        if received_username != self._username or received_password != self._password:
-            writer.write(bytes([0x01, 0x01]))  # failure
+            writer.write(bytes([0x01, SOCKS5_REP_SUCCESS]))
             await writer.drain()
-            logger.warning('SOCKS5 server: authentication failed for user %r', received_username)
-            return None
+        else:
+            if SOCKS5_AUTH_NO_AUTH not in methods:
+                writer.write(bytes([SOCKS5_VERSION, SOCKS5_AUTH_NO_ACCEPTABLE]))
+                await writer.drain()
+                logger.warning('SOCKS5 server: client did not offer no-auth method')
+                return None
 
-        writer.write(bytes([0x01, SOCKS5_REP_SUCCESS]))
-        await writer.drain()
+            writer.write(bytes([SOCKS5_VERSION, SOCKS5_AUTH_NO_AUTH]))
+            await writer.drain()
 
         # ---------------------------------------------------------------- #
         # Request                                                           #
@@ -237,19 +257,27 @@ class Socks5Client:
     Useful for testing :class:`Socks5Server` end-to-end and for building
     chained (double-tunnel) proxy scenarios.
 
+    Two authentication modes are supported:
+
+    * **No authentication** — when *username* and *password* are both
+      ``None`` (the default).  The client advertises only
+      ``NO AUTHENTICATION REQUIRED`` (method 0x00).
+    * **Username/password** (RFC 1929) — when both *username* and *password*
+      are provided.
+
     Args:
         proxy_host: Hostname or IP of the SOCKS5 proxy.
         proxy_port: TCP port of the SOCKS5 proxy.
-        username:   SOCKS5 username to authenticate with.
-        password:   SOCKS5 password to authenticate with.
+        username:   SOCKS5 username, or ``None`` for no-auth mode.
+        password:   SOCKS5 password, or ``None`` for no-auth mode.
     """
 
     def __init__(
         self,
         proxy_host: str,
         proxy_port: int,
-        username: str,
-        password: str,
+        username: str | None = None,
+        password: str | None = None,
     ) -> None:
         self._proxy_host = proxy_host
         self._proxy_port = proxy_port
@@ -290,24 +318,29 @@ class Socks5Client:
         # ---------------------------------------------------------------- #
         # Greeting                                                          #
         # ---------------------------------------------------------------- #
-        writer.write(bytes([SOCKS5_VERSION, 1, SOCKS5_AUTH_USERNAME_PASSWORD]))
+        use_auth = self._username is not None or self._password is not None
+        if use_auth:
+            writer.write(bytes([SOCKS5_VERSION, 1, SOCKS5_AUTH_USERNAME_PASSWORD]))
+        else:
+            writer.write(bytes([SOCKS5_VERSION, 1, SOCKS5_AUTH_NO_AUTH]))
         await writer.drain()
 
         resp = await reader.readexactly(2)
         if resp[0] != SOCKS5_VERSION or resp[1] == SOCKS5_AUTH_NO_ACCEPTABLE:
             raise ConnectionError('SOCKS5 proxy rejected authentication method')
 
-        # ---------------------------------------------------------------- #
-        # RFC 1929 sub-negotiation                                         #
-        # ---------------------------------------------------------------- #
-        u = self._username.encode()
-        p = self._password.encode()
-        writer.write(bytes([0x01, len(u)]) + u + bytes([len(p)]) + p)
-        await writer.drain()
+        if use_auth:
+            # ---------------------------------------------------------------- #
+            # RFC 1929 sub-negotiation                                         #
+            # ---------------------------------------------------------------- #
+            u = (self._username or '').encode()
+            p = (self._password or '').encode()
+            writer.write(bytes([0x01, len(u)]) + u + bytes([len(p)]) + p)
+            await writer.drain()
 
-        auth_resp = await reader.readexactly(2)
-        if auth_resp[1] != SOCKS5_REP_SUCCESS:
-            raise ConnectionError('SOCKS5 proxy authentication failed')
+            auth_resp = await reader.readexactly(2)
+            if auth_resp[1] != SOCKS5_REP_SUCCESS:
+                raise ConnectionError('SOCKS5 proxy authentication failed')
 
         # ---------------------------------------------------------------- #
         # CONNECT request                                                   #

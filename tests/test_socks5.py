@@ -67,6 +67,10 @@ def _full_raw(
     return _greeting([SOCKS5_AUTH_USERNAME_PASSWORD]) + _auth_subneg(username, password) + atyp_bytes
 
 
+def _full_raw_no_auth(atyp_bytes: bytes) -> bytes:
+    return _greeting([SOCKS5_AUTH_NO_AUTH]) + atyp_bytes
+
+
 # ---------------------------------------------------------------------------
 # Socks5Server — unit tests via in-memory streams
 # ---------------------------------------------------------------------------
@@ -78,8 +82,8 @@ class TestSocks5ServerUnit:
     async def _run(
         self,
         data: bytes,
-        user: str = USER,
-        password: str = PASSWORD,
+        user: str | None = USER,
+        password: str | None = PASSWORD,
     ) -> str | None:
         reader = asyncio.StreamReader()
         reader.feed_data(data)
@@ -113,7 +117,14 @@ class TestSocks5ServerUnit:
 
     @pytest.mark.asyncio
     async def test_no_acceptable_method_returns_none(self) -> None:
+        # Server requires username/password; client only offers no-auth → rejected
         assert await self._run(_greeting([SOCKS5_AUTH_NO_AUTH])) is None
+
+    @pytest.mark.asyncio
+    async def test_no_auth_mode_no_acceptable_method_returns_none(self) -> None:
+        # Server in no-auth mode; client only offers username/password → rejected
+        data = _greeting([SOCKS5_AUTH_USERNAME_PASSWORD])
+        assert await self._run(data, user=None, password=None) is None
 
     @pytest.mark.asyncio
     async def test_wrong_username_returns_none(self) -> None:
@@ -164,6 +175,27 @@ class TestSocks5ServerUnit:
             assert result is not None
             assert result.endswith(f':{port}')
 
+    # -- no-auth mode ---------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_no_auth_ipv4_connect(self) -> None:
+        data = _full_raw_no_auth(_connect_ipv4(b'\x7f\x00\x00\x01', 8080))
+        assert await self._run(data, user=None, password=None) == '127.0.0.1:8080'
+
+    @pytest.mark.asyncio
+    async def test_no_auth_domain_connect(self) -> None:
+        data = _full_raw_no_auth(_connect_domain('example.com', 443))
+        assert await self._run(data, user=None, password=None) == 'example.com:443'
+
+    @pytest.mark.asyncio
+    async def test_no_auth_ipv6_connect(self) -> None:
+        ipv6 = b'\x00' * 15 + b'\x01'  # ::1
+        data = _full_raw_no_auth(_connect_ipv6(ipv6, 22))
+        result = await self._run(data, user=None, password=None)
+        assert result is not None
+        assert ':22' in result
+        assert '[' in result
+
 
 # ---------------------------------------------------------------------------
 # Socks5Server + Socks5Client — integration tests over loopback TCP
@@ -173,13 +205,13 @@ class TestSocks5ServerUnit:
 class TestSocks5Integration:
     """End-to-end tests: Socks5Client connects to a real Socks5Server listener."""
 
-    @pytest_asyncio.fixture
-    async def socks5_proxy(self) -> AsyncGenerator[tuple[str, int, list[str | None]], None]:
-        """Start a minimal SOCKS5 server that accepts one connection and records
-        the target returned by Socks5Server.handshake."""
+    async def _make_proxy(
+        self,
+        username: str | None = None,
+        password: str | None = None,
+    ) -> tuple[asyncio.Server, str, int, list[str | None]]:
         results: list[str | None] = []
-
-        server_obj = Socks5Server(USER, PASSWORD)
+        server_obj = Socks5Server(username, password)
 
         async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             target = await server_obj.handshake(reader, writer)
@@ -188,6 +220,19 @@ class TestSocks5Integration:
 
         server = await asyncio.start_server(handler, '127.0.0.1', 0)
         host, port = server.sockets[0].getsockname()
+        return server, host, port, results
+
+    @pytest_asyncio.fixture
+    async def socks5_proxy(self) -> AsyncGenerator[tuple[str, int, list[str | None]], None]:
+        """Start a minimal SOCKS5 server with username/password auth."""
+        server, host, port, results = await self._make_proxy(USER, PASSWORD)
+        async with server:
+            yield host, port, results
+
+    @pytest_asyncio.fixture
+    async def socks5_proxy_no_auth(self) -> AsyncGenerator[tuple[str, int, list[str | None]], None]:
+        """Start a minimal SOCKS5 server with no authentication."""
+        server, host, port, results = await self._make_proxy()
         async with server:
             yield host, port, results
 
@@ -209,5 +254,26 @@ class TestSocks5Integration:
     async def test_client_wrong_password_raises(self, socks5_proxy: tuple[str, int, list[str | None]]) -> None:
         host, port, _ = socks5_proxy
         client = Socks5Client(host, port, USER, 'wrongpass')
+        with pytest.raises(ConnectionError):
+            await client.connect('example.com', 80)
+
+    @pytest.mark.asyncio
+    async def test_no_auth_client_connects(self, socks5_proxy_no_auth: tuple[str, int, list[str | None]]) -> None:
+        host, port, results = socks5_proxy_no_auth
+        client = Socks5Client(host, port)
+        try:
+            reader, writer = await client.connect('example.com', 443)
+            writer.close()
+        except Exception:
+            pass
+        await asyncio.sleep(0.05)
+        assert results == ['example.com:443']
+
+    @pytest.mark.asyncio
+    async def test_no_auth_client_rejected_by_auth_server(
+        self, socks5_proxy: tuple[str, int, list[str | None]]
+    ) -> None:
+        host, port, _ = socks5_proxy
+        client = Socks5Client(host, port)  # no credentials
         with pytest.raises(ConnectionError):
             await client.connect('example.com', 80)
