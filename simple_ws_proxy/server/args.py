@@ -47,4 +47,13 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help='Allowed clock-skew in seconds for the Time header (default: 5)',
     )
+    parser.add_argument(
+        '--proxy-host',
+        help='Proxy host to use for SOCKS5 connections. Empty value not use proxy.',
+    )
+    parser.add_argument(
+        '--proxy-port',
+        type=int,
+        help='Proxy port to use for SOCKS5 connections. Empty value not use proxy.',
+    )
     return parser.parse_args()
