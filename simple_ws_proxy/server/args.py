@@ -14,6 +14,10 @@ def parse_args() -> argparse.Namespace:
         - ``workers`` (int): Number of prefork worker processes.
         - ``secret_key`` (str): Shared secret used for authentication and encryption.
         - ``time_window`` (int): Allowed clock-skew in seconds for the ``Time`` header.
+        - ``proxy_host`` (str | None): Upstream SOCKS5 proxy hostname, or ``None``
+          for direct connections.
+        - ``proxy_port`` (int | None): Upstream SOCKS5 proxy port, or ``None``
+          for direct connections.
     """
     parser = argparse.ArgumentParser(
         prog='simple-ws-proxy-server',
@@ -49,11 +53,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         '--proxy-host',
-        help='Proxy host to use for SOCKS5 connections. Empty value not use proxy.',
+        help=(
+            'Hostname or IP of an upstream SOCKS5 proxy. '
+            'When set, the server connects to targets through this proxy '
+            'instead of opening direct TCP connections.'
+        ),
     )
     parser.add_argument(
         '--proxy-port',
         type=int,
-        help='Proxy port to use for SOCKS5 connections. Empty value not use proxy.',
+        help='TCP port of the upstream SOCKS5 proxy (required when --proxy-host is set).',
     )
     return parser.parse_args()

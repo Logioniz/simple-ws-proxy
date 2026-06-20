@@ -113,7 +113,7 @@ class ConnectionHandler:
                     data = message if isinstance(message, bytes) else message.encode()
                     writer.write(cipher.decrypt(data))
                     await writer.drain()
-            except websockets.ConnectionClosed, asyncio.CancelledError:
+            except (websockets.ConnectionClosed, asyncio.CancelledError):
                 pass
             finally:
                 writer.close()
@@ -125,7 +125,7 @@ class ConnectionHandler:
                     if not data:
                         break
                     await ws.send(cipher.encrypt(data))
-            except websockets.ConnectionClosed, asyncio.CancelledError:
+            except (websockets.ConnectionClosed, asyncio.CancelledError):
                 pass
 
         tasks = [
