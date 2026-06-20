@@ -12,6 +12,7 @@ from simple_ws_proxy.common.auth import Authenticator
 from simple_ws_proxy.common.messages.coder import decode
 from simple_ws_proxy.common.messages.connect import ConnectMessage
 from simple_ws_proxy.common.prefork_server import PreforkServer
+from simple_ws_proxy.common.socks5 import Socks5Client
 from simple_ws_proxy.server.args import parse_args
 
 logging.basicConfig(
@@ -32,11 +33,26 @@ class ConnectionHandler:
     Args:
         ws:            Accepted WebSocket connection.
         authenticator: Shared :class:`~simple_ws_proxy.common.auth.Authenticator`.
+        proxy_host:    Proxy host to use for SOCKS5 connections.
+        proxy_port:    Proxy port to use for SOCKS5 connections.
     """
 
-    def __init__(self, ws: ServerConnection, authenticator: Authenticator) -> None:
+    _ws: ServerConnection
+    _authenticator: Authenticator
+    _proxy_host: str | None
+    _proxy_port: int | None
+
+    def __init__(
+        self,
+        ws: ServerConnection,
+        authenticator: Authenticator,
+        proxy_host: str | None = None,
+        proxy_port: int | None = None,
+    ) -> None:
         self._ws = ws
         self._authenticator = authenticator
+        self._proxy_host = proxy_host
+        self._proxy_port = proxy_port
 
     async def run(self) -> None:
         """Authenticate, parse the connect request, and relay traffic."""
@@ -79,7 +95,11 @@ class ConnectionHandler:
 
         # --- open TCP connection to target ---
         try:
-            reader, writer = await asyncio.open_connection(host, port)
+            if self._proxy_host and self._proxy_port:
+                socks = Socks5Client(self._proxy_host, self._proxy_port)
+                reader, writer = await socks.connect(host, port)
+            else:
+                reader, writer = await asyncio.open_connection(host, port)
         except OSError as exc:
             logger.warning('Cannot connect to %s:%d — %s', host, port, exc)
             await ws.close(WS_CLOSE_INTERNAL_ERROR, f'Cannot connect to target: {exc}')
@@ -93,7 +113,7 @@ class ConnectionHandler:
                     data = message if isinstance(message, bytes) else message.encode()
                     writer.write(cipher.decrypt(data))
                     await writer.drain()
-            except websockets.ConnectionClosed, asyncio.CancelledError:
+            except (websockets.ConnectionClosed, asyncio.CancelledError):
                 pass
             finally:
                 writer.close()
@@ -105,7 +125,7 @@ class ConnectionHandler:
                     if not data:
                         break
                     await ws.send(cipher.encrypt(data))
-            except websockets.ConnectionClosed, asyncio.CancelledError:
+            except (websockets.ConnectionClosed, asyncio.CancelledError):
                 pass
 
         tasks = [
@@ -132,17 +152,28 @@ class ProxyServer:
         authenticator: Shared :class:`~simple_ws_proxy.common.auth.Authenticator`.
     """
 
+    _host: str
+    _port: int
+    _workers: int
+    _authenticator: Authenticator
+    _proxy_host: str | None
+    _proxy_port: int | None
+
     def __init__(
         self,
         host: str,
         port: int,
         workers: int,
         authenticator: Authenticator,
+        proxy_host: str | None = None,
+        proxy_port: int | None = None,
     ) -> None:
         self._host = host
         self._port = port
         self._workers = workers
         self._authenticator = authenticator
+        self._proxy_host = proxy_host
+        self._proxy_port = proxy_port
 
     def run(self) -> None:
         """Bind the socket, fork workers, and wait for them to finish."""
@@ -152,11 +183,15 @@ class ProxyServer:
 
     def _worker(self, sock: socket.socket) -> None:
         """Entry point for each forked worker process."""
-        authenticator = self._authenticator
 
         async def _serve() -> None:
             async def handler(ws: ServerConnection) -> None:
-                await ConnectionHandler(ws, authenticator).run()
+                await ConnectionHandler(
+                    ws=ws,
+                    authenticator=self._authenticator,
+                    proxy_host=self._proxy_host,
+                    proxy_port=self._proxy_port,
+                ).run()
 
             async with serve(handler, sock=sock) as server:
                 logger.info('Worker %d ready', os.getpid())
@@ -174,6 +209,8 @@ def main() -> None:
         port=args.port,
         workers=args.workers,
         authenticator=authenticator,
+        proxy_host=args.proxy_host,
+        proxy_port=args.proxy_port,
     ).run()
 
 
