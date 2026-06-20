@@ -21,7 +21,7 @@ make develop
 ## Running the server
 
 ```bash
-simple-ws-proxy-server --secret-key <key> [options]
+uv run simple-ws-proxy-server --secret-key <key> [options]
 ```
 
 | Option | Default | Description |
@@ -37,13 +37,13 @@ simple-ws-proxy-server --secret-key <key> [options]
 **Example:**
 
 ```bash
-simple-ws-proxy-server --secret-key mysecret --port 8765 --workers 4
+uv run simple-ws-proxy-server --secret-key mysecret --port 8765 --workers 4
 ```
 
 ## Running the client
 
 ```bash
-simple-ws-proxy-client --server <ws-url> --listen-port <port> --secret-key <key> [options]
+uv run simple-ws-proxy-client --server <ws-url> --listen-port <port> --secret-key <key> [options]
 ```
 
 | Option | Default | Description |
@@ -58,7 +58,7 @@ simple-ws-proxy-client --server <ws-url> --listen-port <port> --secret-key <key>
 **Example:**
 
 ```bash
-simple-ws-proxy-client \
+uv run simple-ws-proxy-client \
   --server ws://example.com:8765 \
   --listen-port 1080 \
   --secret-key mysecret \
@@ -79,7 +79,7 @@ sees both the origin and the destination.
 **Node B** (inner server, closer to the target):
 
 ```bash
-simple-ws-proxy-server \
+uv run simple-ws-proxy-server \
   --secret-key keyB \
   --port 8766
 ```
@@ -87,7 +87,7 @@ simple-ws-proxy-server \
 **Node B client** (exposes a local SOCKS5 port that Node A's server will use):
 
 ```bash
-simple-ws-proxy-client \
+uv run simple-ws-proxy-client \
   --server ws://nodeB:8766 \
   --listen-port 1081 \
   --secret-key keyB
@@ -97,7 +97,7 @@ simple-ws-proxy-client \
 through Node B via SOCKS5):
 
 ```bash
-simple-ws-proxy-server \
+uv run simple-ws-proxy-server \
   --secret-key keyA \
   --port 8765 \
   --proxy-host 127.0.0.1 \
@@ -107,7 +107,7 @@ simple-ws-proxy-server \
 **User's client** (local SOCKS5 listener):
 
 ```bash
-simple-ws-proxy-client \
+uv run simple-ws-proxy-client \
   --server ws://nodeA:8765 \
   --listen-port 1080 \
   --secret-key keyA \
