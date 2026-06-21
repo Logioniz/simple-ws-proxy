@@ -12,6 +12,7 @@ def parse_args() -> argparse.Namespace:
         - ``server`` (str): WebSocket server URL, e.g. ``ws://localhost:8765``.
         - ``listen_host`` (str): Local address to bind the SOCKS5 listener to.
         - ``listen_port`` (int): Local port to listen on.
+        - ``workers`` (int): Number of prefork worker processes.
         - ``secret_key`` (str): Shared secret used for authentication and encryption.
         - ``client_user`` (str | None): SOCKS5 username that clients must supply,
           or ``None`` to allow unauthenticated connections.
@@ -37,6 +38,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         required=True,
         help='Local port to listen on for SOCKS5 connections',
+    )
+    parser.add_argument(
+        '--workers',
+        type=int,
+        default=1,
+        help='Number of prefork worker processes (default: 1)',
     )
     parser.add_argument(
         '--secret-key',

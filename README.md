@@ -52,6 +52,7 @@ uv run simple-ws-proxy-client --server <ws-url> --listen-port <port> --secret-ke
 | `--listen-port` | *(required)* | Local port to listen on for SOCKS5 connections |
 | `--secret-key` | *(required)* | Shared secret key (must match the server) |
 | `--listen-host` | `127.0.0.1` | Local address to bind the SOCKS5 listener to |
+| `--workers` | `1` | Number of prefork worker processes |
 | `--client-user` | *(none)* | SOCKS5 username that connecting clients must provide; omit to allow no-auth |
 | `--client-password` | *(none)* | SOCKS5 password that connecting clients must provide; omit to allow no-auth |
 
