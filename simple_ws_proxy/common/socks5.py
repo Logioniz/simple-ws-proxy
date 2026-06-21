@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import struct
 from collections.abc import Awaitable, Callable
 
@@ -91,11 +92,16 @@ class Socks5Server:
     async def start_server(
         self,
         handler: Socks5Handler,
-        listen_host: str,
-        listen_port: int,
+        listen_host: str | None = None,
+        listen_port: int | None = None,
+        *,
+        sock: socket.socket | None = None,
     ) -> asyncio.Server:
         """Create a TCP server that performs the SOCKS5 handshake on each
         accepted connection and then delegates to *handler*.
+
+        Exactly one of (*listen_host* + *listen_port*) or *sock* must be
+        provided.
 
         Args:
             handler:     Async callable ``(target, reader, writer) -> None``
@@ -103,12 +109,17 @@ class Socks5Server:
                          the ``"host:port"`` string requested by the client.
             listen_host: Local address to bind the listener to.
             listen_port: Local TCP port to listen on.
+            sock:        Optional pre-bound :class:`socket.socket` to use
+                         instead of binding a new one.  Pass this in prefork
+                         workers so all workers share the same listening socket.
 
         Returns:
             An :class:`asyncio.Server` instance.  Call
             ``async with server`` / ``await server.serve_forever()`` to
             start accepting connections.
         """
+        if sock is None and (listen_host is None or listen_port is None):
+            raise ValueError('Either sock or both listen_host and listen_port must be provided')
 
         async def _connection_cb(
             reader: asyncio.StreamReader,
@@ -120,7 +131,10 @@ class Socks5Server:
                 return
             await handler(target, reader, writer)
 
-        server = await asyncio.start_server(_connection_cb, listen_host, listen_port)
+        if sock is not None:
+            server = await asyncio.start_server(_connection_cb, sock=sock)
+        else:
+            server = await asyncio.start_server(_connection_cb, listen_host, listen_port)
         addrs = ', '.join(str(s.getsockname()) for s in server.sockets)
         logger.info('SOCKS5 server listening on %s', addrs)
         return server
