@@ -17,6 +17,9 @@ dev = [
     "mypy>=1.10",
     "ruff>=0.4",
 ]
+build = [
+    "pyinstaller>=6.0",
+]
 
 [project.scripts]
 simple-ws-proxy-server = "simple_ws_proxy.server.main:main"

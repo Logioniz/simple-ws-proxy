@@ -18,6 +18,19 @@ For development dependencies (linting, tests):
 make develop
 ```
 
+## Building standalone binaries
+
+To produce self-contained executables (server and client) that run without a
+Python installation, use [PyInstaller](https://pyinstaller.org/) via:
+
+```bash
+make build
+```
+
+The binaries are written to `dist/<os>/` (e.g. `dist/linux/`), where `<os>` is
+detected automatically. PyInstaller does not cross-compile, so run `make build`
+on each platform you want to target — Linux, Windows and macOS separately.
+
 ## Running the server
 
 ```bash
